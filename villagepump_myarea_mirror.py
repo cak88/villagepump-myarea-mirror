@@ -133,12 +133,15 @@ def diary_nav(lines):
 
 def link_foreign_icons(text, cfg):
     """他者のアイコン `[名前.icon]` を `[/<source>/名前.icon]` に変換する。
-    自分のアイコンと日付アイコンは対象外（自分は転記先で解決し、日付は自分の
-    前日/翌日ページへ向けたいため）。"""
+    自分のアイコンは対象外（転記先で解決するため）。
+    日付アイコン `[YYYY/MM/DD.icon]` は `[YYYY/MM/DD]` に変換する（自分の
+    前日/翌日ページへリンクさせるため、アイコン記法を外す）。"""
     def repl(m):
         name, mult = m.group(1), m.group(2) or ""
-        if name == cfg.icon or DIARY_RE.match(name):
+        if name == cfg.icon:
             return m.group(0)
+        if DIARY_RE.match(name):
+            return f"[{name}]"
         return f"[/{cfg.source_project}/{name}.icon{mult}]"
     return ICON_TOKEN_RE.sub(repl, text)
 
