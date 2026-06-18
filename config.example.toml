@@ -1,0 +1,18 @@
+# villagepump-myarea-mirror 設定ファイルのひな型。
+# このファイルを config.toml にコピーして自分の値に書き換える:
+#   cp config.example.toml config.toml
+
+# 転記元: 自分の場所を書いている共同日記プロジェクト（例: 井戸端 = villagepump）
+source_project = "villagepump"
+
+# 転記先: 自分の（公開）プロジェクト名
+dest_project = "your-project"
+
+# 転記元での自分のアイコン名（[名前.icon] の「名前」部分）
+icon = "your-icon"
+
+# Cosense のオリジン。通常はこのまま
+origin = "https://scrapbox.io"
+
+# today / yesterday を解決するタイムゾーン
+timezone = "Asia/Tokyo"

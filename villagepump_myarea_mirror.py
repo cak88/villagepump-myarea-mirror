@@ -1,0 +1,247 @@
+#!/usr/bin/env python3
+"""Scrapbox/Cosense の共同日記ページから「自分の場所」を、自分のプロジェクトへ転記する。
+
+井戸端（villagepump）のような、各人が自分のアイコン記法 `[名前.icon]` を col0（行頭インデント
+無し）に置いてその下に書く共同日記を対象に、自分のアイコンの場所を切り出して同名ページへ
+転記する。対象プロジェクト・アイコン名などは config.toml で設定する。
+
+「自分の場所」= col0 の `[<icon>.icon...]` 行から、次の col0 `[name.icon]` 行の直前まで。
+その場所に入っている他者のリアクション/リプライも verbatim で残す（会話の流れごと保存）。
+複数箇所に書いていれば各ブロックを順に連結する。
+
+日記ページ（タイトルが `YYYY/MM/DD`）のときは次も足す:
+  - ページ上部の2行（`第N週: …` と `YYYY年 …％経過`）をタイトル直下に
+  - 後ろから2行目のナビ行（`[前日.icon] ← 当日 → [翌日.icon]`）を末尾に
+    → 転記先で自分の前日/翌日ページへのナビとして働き、日記が日々チェーンする
+
+他者アイコン/ページリンクは既定で `[/<source_project>/...]`（転記元へのクロスプロジェクト
+参照）に変換し、転記先でのリンク切れ・孤児リンクを防ぐ。
+
+使い方:
+    villagepump_myarea_mirror.py PAGE                # dry-run: 転記される本文を表示するだけ（書き込まない）
+    villagepump_myarea_mirror.py PAGE --publish      # 転記先に同名ページを作成する
+    villagepump_myarea_mirror.py PAGE --publish --overwrite   # 既存ページを本文ごと作り直す
+
+PAGE は転記元のページ名。日記なら `YYYY/MM/DD` のほか `today` / `yesterday` も可。
+前提: `cosense` CLI（https://www.npmjs.com/package/@helpfeel/cosense-cli）が
+インストール済み・ログイン済みで、転記先への書き込み権限があること。
+"""
+import argparse
+import datetime
+import json
+import re
+import subprocess
+import sys
+import tomllib
+import urllib.parse
+import zoneinfo
+from dataclasses import dataclass
+from pathlib import Path
+
+ICON_RE = re.compile(r"^\[[^\]]+\.icon\]")        # col0 = その人のセクション見出し
+DIARY_RE = re.compile(r"^\d{4}/\d{2}/\d{2}$")     # 日記ページのタイトル形式
+NAV_RE = re.compile(r"←.*→")                      # 前日←当日→翌日 のナビ行
+ICON_TOKEN_RE = re.compile(r"\[([^\[\]]+?)\.icon(\*\d+)?\]")  # [名前.icon] / [名前.icon*N]
+# 単層ブラケット（[[太字]] の内側は対象外にする lookbehind/lookahead 付き）
+LINK_RE = re.compile(r"(?<!\[)\[([^\[\]]+)\](?!\])")
+# Cosense の装飾記法 `[* 太字]` `[/ 斜体]` `[$ 数式]` 等＝記号列＋空白で始まる
+DECORATION_RE = re.compile(r"^[*/\-_$~%=]+\s")
+
+
+@dataclass
+class Config:
+    source_project: str   # 転記元（共同日記のあるプロジェクト）
+    dest_project: str     # 転記先（自分のプロジェクト）
+    icon: str             # 転記元での自分のアイコン名
+    origin: str           # Cosense のオリジン
+    timezone: str         # today/yesterday 解決用のタイムゾーン
+
+
+def load_config(path):
+    if not path.exists():
+        sys.exit(f"config が無い: {path}\n  config.example.toml をコピーして編集してください:\n"
+                 f"    cp {path.parent / 'config.example.toml'} {path}")
+    with path.open("rb") as f:
+        data = tomllib.load(f)
+    try:
+        return Config(
+            source_project=data["source_project"],
+            dest_project=data["dest_project"],
+            icon=data["icon"],
+            origin=data.get("origin", "https://scrapbox.io"),
+            timezone=data.get("timezone", "Asia/Tokyo"),
+        )
+    except KeyError as e:
+        sys.exit(f"config に必須キーが無い: {e} ({path})")
+
+
+def resolve_date(keyword, tz):
+    today = datetime.datetime.now(zoneinfo.ZoneInfo(tz)).date()
+    if keyword == "today":
+        d = today
+    elif keyword == "yesterday":
+        d = today - datetime.timedelta(days=1)
+    else:
+        return keyword  # 既にページ名（日記なら YYYY/MM/DD）
+    return d.strftime("%Y/%m/%d")
+
+
+def page_url(cfg, project, title):
+    return f"{cfg.origin}/{project}/{urllib.parse.quote(title, safe='')}"
+
+
+def read_page(cfg, project, title):
+    url = page_url(cfg, project, title)
+    r = subprocess.run(["cosense", "readPage", url], capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(f"readPage failed ({url}): {r.stderr.strip()}")
+    return json.loads(r.stdout)
+
+
+def extract_blocks(lines, icon):
+    """col0 `[icon.icon...]` 見出しから次の col0 見出し直前までを各ブロックとして返す。"""
+    head = f"[{icon}.icon]"
+    n = len(lines)
+    blocks, i = [], 0
+    while i < n:
+        if ICON_RE.match(lines[i]) and lines[i].startswith(head):
+            j = i + 1
+            while j < n and not ICON_RE.match(lines[j]):
+                j += 1
+            block = lines[i:j]
+            while block and block[-1].strip() == "":  # 末尾空行を落とす
+                block.pop()
+            blocks.append(block)
+            i = j
+        else:
+            i += 1
+    return blocks
+
+
+def diary_header(lines):
+    """日記ページ上部の2行（タイトル直下）。空行は除く。"""
+    return [t for t in lines[1:3] if t.strip()]
+
+
+def diary_nav(lines):
+    """前日←当日→翌日 のナビ行（後ろから探す）。無ければ None。"""
+    for t in reversed(lines):
+        if NAV_RE.search(t):
+            return t
+    return None
+
+
+def link_foreign_icons(text, cfg):
+    """他者のアイコン `[名前.icon]` を `[/<source>/名前.icon]` に変換する。
+    自分のアイコンと日付アイコンは対象外（自分は転記先で解決し、日付は自分の
+    前日/翌日ページへ向けたいため）。"""
+    def repl(m):
+        name, mult = m.group(1), m.group(2) or ""
+        if name == cfg.icon or DIARY_RE.match(name):
+            return m.group(0)
+        return f"[/{cfg.source_project}/{name}.icon{mult}]"
+    return ICON_TOKEN_RE.sub(repl, text)
+
+
+def link_foreign_pages(text, cfg):
+    """転記元内のページリンク `[ページ名]` を `[/<source>/ページ名]` に変換する。
+    除外（別物なので触らない）:
+      - スラッシュを含む … 別プロジェクトリンク `[/proj/...]` や `[2026/06/16]` 等
+      - URL を含む … 外部リンク `[ラベル https://...]`
+      - `.icon` を含む … アイコン（link_foreign_icons が処理済み／自分のは残す）
+      - 装飾記法 `[* ...]` `[$ ...]` 等
+      - `[[太字]]` の内側（LINK_RE の lookaround で除外済み）"""
+    def repl(m):
+        x = m.group(1)
+        if ("/" in x or "http" in x or ".icon" in x
+                or not x.strip() or DECORATION_RE.match(x)):
+            return m.group(0)
+        return f"[/{cfg.source_project}/{x}]"
+    return LINK_RE.sub(repl, text)
+
+
+def build_body(title, lines, blocks, cfg, foreign_link=True):
+    """転記先ページの本文行リストを組む（1行目 = タイトル）。"""
+    body = [title]
+    is_diary = bool(DIARY_RE.match(title))
+    if is_diary:
+        body += diary_header(lines)
+    for block in blocks:
+        body.append("")  # 見出し/前ブロックとの区切り
+        body += block
+    if is_diary:
+        nav = diary_nav(lines)
+        if nav:
+            body += ["", nav]
+    if foreign_link:
+        body = [link_foreign_pages(link_foreign_icons(t, cfg), cfg) for t in body]
+    return body
+
+
+def publish(title, body_lines, cfg, overwrite):
+    proj_url = f"{cfg.origin}/{cfg.dest_project}"
+    dst = read_page(cfg, cfg.dest_project, title)
+
+    if not dst.get("persistent", False):
+        prev = subprocess.run(
+            ["cosense", "previewEdit", "--new", proj_url],
+            input="\n".join(body_lines), capture_output=True, text=True,
+        )
+    else:
+        if not overwrite:
+            sys.exit(f"{cfg.dest_project}/{title} は既に存在する。作り直すなら --overwrite。")
+        # 作り直し: タイトル(line0)はそのまま残し、それ以外を全削除→新本文を末尾に入れる
+        old = dst["lines"]
+        ops = [{"delete": l["id"]} for l in old[1:]]
+        new_after_title = "\n".join(body_lines[1:])
+        if new_after_title:
+            ops.append({"insertBefore": "_end", "text": new_after_title})
+        prev = subprocess.run(
+            ["cosense", "previewEdit", proj_url, dst["id"]],
+            input=json.dumps({"ops": ops}), capture_output=True, text=True,
+        )
+    if prev.returncode != 0:
+        sys.exit(f"previewEdit failed: {prev.stderr.strip()}\n{prev.stdout}")
+    m = re.search(r"previewId:\s*(\S+)", prev.stdout)
+    if not m:
+        sys.exit(f"previewId not found:\n{prev.stdout}")
+    sub = subprocess.run(
+        ["cosense", "submitEdit", proj_url, m.group(1)],
+        capture_output=True, text=True,
+    )
+    if sub.returncode != 0:
+        sys.exit(f"submitEdit failed: {sub.stderr.strip()}\n{sub.stdout}")
+    print(sub.stdout.strip())
+
+
+def main():
+    ap = argparse.ArgumentParser(description="共同日記の自分の場所を自分のプロジェクトへ転記する")
+    ap.add_argument("page", help="転記元のページ名（日記は YYYY/MM/DD / today / yesterday）")
+    ap.add_argument("--publish", action="store_true", help="実際に書き込む（既定は dry-run）")
+    ap.add_argument("--overwrite", action="store_true", help="既存ページを本文ごと作り直す")
+    ap.add_argument("--no-foreign-link", dest="foreign_link", action="store_false",
+                    help="他者アイコン・ページリンクを [/<source>/...] 化せず素のまま残す")
+    ap.add_argument("--config", type=Path, default=Path(__file__).parent / "config.toml",
+                    help="設定ファイルのパス（既定: スクリプトと同じディレクトリの config.toml）")
+    args = ap.parse_args()
+
+    cfg = load_config(args.config)
+    title = resolve_date(args.page, cfg.timezone)
+    src = read_page(cfg, cfg.source_project, title)
+    if not src.get("persistent", False):
+        sys.exit(f"転記元ページが見つからない: {page_url(cfg, cfg.source_project, title)}")
+    lines = [l["text"] for l in src["lines"]]
+    blocks = extract_blocks(lines, cfg.icon)
+    if not blocks:
+        sys.exit(f"{title} に [{cfg.icon}.icon] ブロックが無い")
+    body_lines = build_body(title, lines, blocks, cfg, args.foreign_link)
+
+    if not args.publish:
+        print("\n".join(body_lines))
+        print("\n--- dry-run（書き込んでいない）。確定するには --publish ---", file=sys.stderr)
+        return
+    publish(title, body_lines, cfg, args.overwrite)
+
+
+if __name__ == "__main__":
+    main()

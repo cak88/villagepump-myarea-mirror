@@ -1,0 +1,6 @@
+# ローカル設定（個人の値。公開しない）
+config.toml
+
+# Python
+__pycache__/
+*.pyc
