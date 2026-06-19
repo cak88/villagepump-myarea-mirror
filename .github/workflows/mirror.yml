@@ -1,0 +1,63 @@
+name: mirror diary
+
+# 共同日記（井戸端）の「自分の場所」を自分のプロジェクトへ毎日ミラーする。
+# 認証: cosense の Personal Access Token を repo secret COSENSE_TOKEN に登録しておくこと
+#   (Settings → Secrets and variables → Actions → New repository secret)。
+# 設定値(source/dest/icon)は秘密ではないので、この workflow 内で config.toml を生成する。
+
+on:
+  schedule:
+    # GitHub Actions の cron は UTC。21:00 UTC = 06:00 JST。
+    # スクリプトは「昨日」を config の timezone(Asia/Tokyo)で解決するので、
+    # JST 0時を過ぎたこの時刻に回せば「JST の前日ぶん」を転記する。
+    - cron: '0 21 * * *'
+  workflow_dispatch:
+    inputs:
+      page:
+        description: '転記元ページ名（YYYY/MM/DD / today / yesterday）'
+        required: false
+        default: 'yesterday'
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'  # tomllib(3.11+) が要る
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: install cosense CLI
+        run: npm install -g @helpfeel/cosense-cli
+
+      - name: configure cosense auth
+        env:
+          COSENSE_TOKEN: ${{ secrets.COSENSE_TOKEN }}
+        run: |
+          if [ -z "$COSENSE_TOKEN" ]; then
+            echo "::error::secret COSENSE_TOKEN が未設定です（Settings → Secrets で登録してください）"
+            exit 1
+          fi
+          mkdir -p "$HOME/.cosense"
+          printf '{"users":[{"url":"https://scrapbox.io","token":"%s"}]}\n' "$COSENSE_TOKEN" > "$HOME/.cosense/settings.json"
+          chmod 600 "$HOME/.cosense/settings.json"
+
+      - name: generate config.toml
+        run: |
+          cat > config.toml <<'EOF'
+          source_project = "villagepump"
+          dest_project = "caki"
+          icon = "caki"
+          origin = "https://scrapbox.io"
+          timezone = "Asia/Tokyo"
+          EOF
+
+      - name: mirror
+        # 正常な no-op（未記入・ミラー済み・転記元ページ未作成）は exit 0 で緑のまま。
+        # 真のエラー(認証失敗・API失敗等)だけ exit 1 になり、GitHub が失敗通知を飛ばす。
+        run: python3 villagepump_myarea_mirror.py "${{ github.event.inputs.page || 'yesterday' }}" --publish

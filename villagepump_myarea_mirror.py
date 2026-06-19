@@ -57,6 +57,14 @@ class Config:
     timezone: str         # today/yesterday 解決用のタイムゾーン
 
 
+def skip(msg):
+    """正常な「やることが無い」状態で終わる。真のエラー(sys.exit=1)と区別するため exit 0。
+    無人実行(GitHub Actions 等)で、未記入の日・ミラー済み・転記元ページ未作成といった
+    日常的な no-op を job 失敗として赤くしない／失敗通知を飛ばさないため。"""
+    print(f"skip: {msg}")
+    sys.exit(0)
+
+
 def load_config(path):
     if not path.exists():
         sys.exit(f"config が無い: {path}\n  config.example.toml をコピーして編集してください:\n"
@@ -192,7 +200,7 @@ def publish(title, body_lines, cfg, overwrite):
         )
     else:
         if not overwrite:
-            sys.exit(f"{cfg.dest_project}/{title} は既に存在する。作り直すなら --overwrite。")
+            skip(f"{cfg.dest_project}/{title} は既に存在する（ミラー済み）。作り直すなら --overwrite。")
         # 作り直し: タイトル(line0)はそのまま残し、それ以外を全削除→新本文を末尾に入れる
         old = dst["lines"]
         ops = [{"delete": l["id"]} for l in old[1:]]
@@ -232,11 +240,11 @@ def main():
     title = resolve_date(args.page, cfg.timezone)
     src = read_page(cfg, cfg.source_project, title)
     if not src.get("persistent", False):
-        sys.exit(f"転記元ページが見つからない: {page_url(cfg, cfg.source_project, title)}")
+        skip(f"転記元ページが無い（未作成）: {page_url(cfg, cfg.source_project, title)}")
     lines = [l["text"] for l in src["lines"]]
     blocks = extract_blocks(lines, cfg.icon)
     if not blocks:
-        sys.exit(f"{title} に [{cfg.icon}.icon] ブロックが無い")
+        skip(f"{title} に [{cfg.icon}.icon] ブロックが無い（その日は未記入）")
     body_lines = build_body(title, lines, blocks, cfg, args.foreign_link)
 
     if not args.publish:

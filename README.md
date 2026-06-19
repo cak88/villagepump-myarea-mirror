@@ -76,6 +76,17 @@ python3 villagepump_myarea_mirror.py 2026/06/16 --publish --overwrite   # 既存
 
 `--config PATH` で別の設定ファイルを指定できる。
 
+正常に「やることが無い」状態（その日は未記入＝ブロック無し／既にミラー済み／転記元ページが未作成）は
+**終了コード 0**（無人実行で job を失敗扱いにしないため）。設定欠如・認証失敗・Cosense API 失敗など
+真のエラーだけ非ゼロで終わる。
+
+## 自動実行（GitHub Actions）
+
+`.github/workflows/mirror.yml` が毎日 06:00 JST に `yesterday --publish` を回す（手動実行も可）。
+動かすには cosense の Personal Access Token を repo secret `COSENSE_TOKEN` に登録しておくこと
+（Settings → Secrets and variables → Actions）。設定値（source/dest/icon）は秘密でないので
+workflow 内で `config.toml` を生成する。
+
 ## 設定（config.toml）
 
 | キー | 説明 |
