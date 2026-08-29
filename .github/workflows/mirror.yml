@@ -21,6 +21,8 @@ on:
 jobs:
   mirror:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # keepalive の空コミット push に要る
     steps:
       - uses: actions/checkout@v4
 
@@ -61,3 +63,19 @@ jobs:
         # 正常な no-op（未記入・ミラー済み・転記元ページ未作成）は exit 0 で緑のまま。
         # 真のエラー(認証失敗・API失敗等)だけ exit 1 になり、GitHub が失敗通知を飛ばす。
         run: python3 villagepump_myarea_mirror.py "${{ github.event.inputs.page || 'yesterday' }}" --publish
+
+      - name: keepalive
+        # GitHub は「60 日 push が無い」リポジトリの scheduled workflow を自動で無効化する
+        # (workflow の状態が disabled_inactivity になる)。失敗にもならず通知も飛ばないので、
+        # ミラーが静かに止まったまま気づけない。活動時計を戻すため 45 日超で空コミットを打つ。
+        # mirror が落ちた日も時計は進むので always()。
+        if: always()
+        run: |
+          days=$(( ( $(date +%s) - $(git log -1 --format=%ct) ) / 86400 ))
+          echo "last commit: ${days}d ago"
+          if [ "$days" -ge 45 ]; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit --allow-empty -m 'chore: keepalive'
+            git push origin HEAD:main  # detached HEAD でも通す
+          fi
