@@ -3,7 +3,7 @@ name: mirror diary
 # 共同日記（井戸端）の「自分の場所」を自分のプロジェクトへ毎日ミラーする。
 # 認証: cosense の Personal Access Token を repo secret COSENSE_TOKEN に登録しておくこと
 #   (Settings → Secrets and variables → Actions → New repository secret)。
-# 設定値(source/dest/icon)は秘密ではないので、この workflow 内で config.toml を生成する。
+# 設定値(source/dest/icon/date_separator)は秘密ではないので、この workflow 内で config.toml を生成する。
 
 on:
   schedule:
@@ -53,10 +53,11 @@ jobs:
         run: |
           cat > config.toml <<'EOF'
           source_project = "villagepump"
-          dest_project = "caki"
+          dest_project = "cak-diary"
           icon = "caki"
           origin = "https://scrapbox.io"
           timezone = "Asia/Tokyo"
+          date_separator = "-"
           EOF
 
       - name: mirror

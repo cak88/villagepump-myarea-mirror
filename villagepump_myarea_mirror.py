@@ -44,6 +44,9 @@ NAV_RE = re.compile(r"←.*→")                      # 前日←当日→翌日
 ICON_TOKEN_RE = re.compile(r"\[([^\[\]]+?)\.icon(\*\d+)?\]")  # [名前.icon] / [名前.icon*N]
 # 単層ブラケット（[[太字]] の内側は対象外にする lookbehind/lookahead 付き）
 LINK_RE = re.compile(r"(?<!\[)\[([^\[\]]+)\](?!\])")
+# 自分の日記へのリンク `[YYYY/MM/DD]` / `[YYYY/MM/DD.icon]` / `[YYYY/MM/DD.icon*N]`。
+# `[` の直後が数字なので `[/<project>/YYYY/MM/DD]` のような他プロジェクト参照には当たらない。
+DIARY_LINK_RE = re.compile(r"\[(\d{4}/\d{2}/\d{2})((?:\.icon(?:\*\d+)?)?)\]")
 # Cosense の装飾記法 `[* 太字]` `[/ 斜体]` `[$ 数式]` 等＝記号列＋空白で始まる
 DECORATION_RE = re.compile(r"^[*/\-_$~%=]+\s")
 
@@ -55,6 +58,7 @@ class Config:
     icon: str             # 転記元での自分のアイコン名
     origin: str           # Cosense のオリジン
     timezone: str         # today/yesterday 解決用のタイムゾーン
+    date_separator: str = "/"  # 転記先での日記タイトルの日付区切り（"/" or "-"）
 
 
 def skip(msg):
@@ -71,6 +75,9 @@ def load_config(path):
                  f"    cp {path.parent / 'config.example.toml'} {path}")
     with path.open("rb") as f:
         data = tomllib.load(f)
+    sep = data.get("date_separator", "/")
+    if sep not in ("/", "-"):
+        sys.exit(f'date_separator は "/" か "-" のどちらか: {sep!r} ({path})')
     try:
         return Config(
             source_project=data["source_project"],
@@ -78,6 +85,7 @@ def load_config(path):
             icon=data["icon"],
             origin=data.get("origin", "https://scrapbox.io"),
             timezone=data.get("timezone", "Asia/Tokyo"),
+            date_separator=sep,
         )
     except KeyError as e:
         sys.exit(f"config に必須キーが無い: {e} ({path})")
@@ -171,6 +179,41 @@ def link_foreign_pages(text, cfg):
     return LINK_RE.sub(repl, text)
 
 
+def dest_title(title, cfg):
+    """転記先でのページ名。日記ページなら日付区切りを cfg.date_separator に揃える。"""
+    if cfg.date_separator != "/" and DIARY_RE.match(title):
+        return title.replace("/", cfg.date_separator)
+    return title
+
+
+def apply_date_separator(body, src_title, cfg):
+    """転記先の日付表記を cfg.date_separator に揃える（タイトル・日記リンク・ナビ行）。
+
+    転記元の日記ページ名は常に `YYYY/MM/DD` なので、転記先で別の区切りを使うなら
+    タイトルだけでなく本文中の自分の日記へのリンクも直す必要がある。直さないと
+    前日/翌日ナビが転記先で行き先を失う。
+
+    link_foreign_pages の後に呼ぶこと。あちらは「`/` を含むリンク＝別プロジェクト参照
+    または日付リンク」と見なして素通しする作りなので、先にハイフン化すると日付リンクが
+    `[/<source_project>/YYYY-MM-DD]` に化ける。
+    """
+    if cfg.date_separator == "/":
+        return body
+    sep = cfg.date_separator
+    out = []
+    for i, text in enumerate(body):
+        if i == 0:
+            out.append(dest_title(text, cfg))
+            continue
+        # `[YYYY/MM/DD]` `[YYYY/MM/DD.icon]` → 区切りを置換
+        text = DIARY_LINK_RE.sub(lambda m: f"[{m.group(1).replace('/', sep)}{m.group(2)}]", text)
+        # ナビ行の中央にあるリンクでない当日の日付（`… ← YYYY/MM/DD → …`）
+        if NAV_RE.search(text):
+            text = text.replace(src_title, src_title.replace("/", sep))
+        out.append(text)
+    return out
+
+
 def build_body(title, lines, blocks, cfg, foreign_link=True):
     """転記先ページの本文行リストを組む（1行目 = タイトル）。"""
     body = [title]
@@ -186,10 +229,11 @@ def build_body(title, lines, blocks, cfg, foreign_link=True):
             body += ["", nav]
     if foreign_link:
         body = [link_foreign_pages(link_foreign_icons(t, cfg), cfg) for t in body]
-    return body
+    return apply_date_separator(body, title, cfg)
 
 
 def publish(title, body_lines, cfg, overwrite):
+    """title は転記先でのページ名（dest_title 済み）。"""
     proj_url = f"{cfg.origin}/{cfg.dest_project}"
     dst = read_page(cfg, cfg.dest_project, title)
 
@@ -251,7 +295,7 @@ def main():
         print("\n".join(body_lines))
         print("\n--- dry-run（書き込んでいない）。確定するには --publish ---", file=sys.stderr)
         return
-    publish(title, body_lines, cfg, args.overwrite)
+    publish(dest_title(title, cfg), body_lines, cfg, args.overwrite)
 
 
 if __name__ == "__main__":
