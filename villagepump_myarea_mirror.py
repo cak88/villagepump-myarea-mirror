@@ -9,6 +9,9 @@
 その場所に入っている他者のリアクション/リプライも verbatim で残す（会話の流れごと保存）。
 複数箇所に書いていれば各ブロックを順に連結する。
 
+転記元ページへのリンク `[/<source_project>/<title>]` をタイトル直下（日記なら見出し2行の下）
+に1行置く。どこから写したかがページ自身に残る。
+
 日記ページ（タイトルが `YYYY/MM/DD`）のときは次も足す:
   - ページ上部の2行（`第N週: …` と `YYYY年 …％経過`）をタイトル直下に
   - 後ろから2行目のナビ行（`[前日.icon] ← 当日 → [翌日.icon]`）を末尾に
@@ -220,6 +223,9 @@ def build_body(title, lines, blocks, cfg, foreign_link=True):
     is_diary = bool(DIARY_RE.match(title))
     if is_diary:
         body += diary_header(lines)
+    # 転記元への参照。日記なら見出し2行の下、それ以外はタイトル直下に置く。
+    # `/` を含むので link_foreign_pages にも apply_date_separator にも触られない。
+    body.append(f"[/{cfg.source_project}/{title}]")
     for block in blocks:
         body.append("")  # 見出し/前ブロックとの区切り
         body += block
