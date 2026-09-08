@@ -111,8 +111,9 @@ python3 villagepump_myarea_mirror.py 2026/06/16 --publish --append      # 既存
 
 ## 自動実行（GitHub Actions）
 
-`.github/workflows/mirror.yml` が毎日 06:00 JST に `yesterday --publish --append` を回す（手動実行も可）。
-`--append` なので、その日のページを自分で先に書いていても中断せず、井戸端ぶんがその下に付く。
+`.github/workflows/mirror.yml` で定期実行できる（手動実行も可）。スケジュール・ページ指定・
+フラグはその workflow を見ること（ここには書かない。二重管理を避ける）。
+
 動かすには cosense の Personal Access Token を repo secret `COSENSE_TOKEN` に登録しておくこと
 （Settings → Secrets and variables → Actions）。設定値（source/dest/icon）は秘密でないので
 workflow 内で `config.toml` を生成する。
