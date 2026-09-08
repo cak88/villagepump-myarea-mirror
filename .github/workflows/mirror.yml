@@ -61,9 +61,12 @@ jobs:
           EOF
 
       - name: mirror
-        # 正常な no-op（未記入・ミラー済み・転記元ページ未作成）は exit 0 で緑のまま。
+        # --append: 転記先にその日のページが既にあっても（自分で先に書いた日など）中断せず、
+        # 既存の記述を残したままその下へ積む。転記元リンク行を印にして二重追記は防がれるので、
+        # 同じ日に何度回っても増えない。
+        # 正常な no-op（未記入・追記済み・転記元ページ未作成）は exit 0 で緑のまま。
         # 真のエラー(認証失敗・API失敗等)だけ exit 1 になり、GitHub が失敗通知を飛ばす。
-        run: python3 villagepump_myarea_mirror.py "${{ github.event.inputs.page || 'yesterday' }}" --publish
+        run: python3 villagepump_myarea_mirror.py "${{ github.event.inputs.page || 'yesterday' }}" --publish --append
 
       - name: keepalive
         # GitHub は「60 日 push が無い」リポジトリの scheduled workflow を自動で無効化する
