@@ -24,6 +24,7 @@
     villagepump_myarea_mirror.py PAGE                # dry-run: 転記される本文を表示するだけ（書き込まない）
     villagepump_myarea_mirror.py PAGE --publish      # 転記先に同名ページを作成する
     villagepump_myarea_mirror.py PAGE --publish --overwrite   # 既存ページを本文ごと作り直す
+    villagepump_myarea_mirror.py PAGE --publish --append      # 既存ページの末尾に追記する
 
 PAGE は転記元のページ名。日記なら `YYYY/MM/DD` のほか `today` / `yesterday` も可。
 前提: `cosense` CLI（https://www.npmjs.com/package/@helpfeel/cosense-cli）が
@@ -217,6 +218,12 @@ def apply_date_separator(body, src_title, cfg):
     return out
 
 
+def source_link(cfg, src_title):
+    """転記元への参照行。どこから写したかがページ自身に残る。
+    追記モード（--append）は、この行の有無を「もう追記済み」の印として使う。"""
+    return f"[/{cfg.source_project}/{src_title}]"
+
+
 def build_body(title, lines, blocks, cfg, foreign_link=True):
     """転記先ページの本文行リストを組む（1行目 = タイトル）。"""
     body = [title]
@@ -225,7 +232,7 @@ def build_body(title, lines, blocks, cfg, foreign_link=True):
         body += diary_header(lines)
     # 転記元への参照。日記なら見出し2行の下、それ以外はタイトル直下に置く。
     # `/` を含むので link_foreign_pages にも apply_date_separator にも触られない。
-    body.append(f"[/{cfg.source_project}/{title}]")
+    body.append(source_link(cfg, title))
     for block in blocks:
         body.append("")  # 見出し/前ブロックとの区切り
         body += block
@@ -238,8 +245,15 @@ def build_body(title, lines, blocks, cfg, foreign_link=True):
     return apply_date_separator(body, title, cfg)
 
 
-def publish(title, body_lines, cfg, overwrite):
-    """title は転記先でのページ名（dest_title 済み）。"""
+def publish(title, body_lines, cfg, marker, mode):
+    """title は転記先でのページ名（dest_title 済み）、marker は転記元への参照行。
+
+    mode は転記先に同名ページが既にあったときの振る舞い:
+      "skip"      … 事故防止で中断する（既定）
+      "overwrite" … 本文ごと作り直す（転記先で手を入れた分は消える）
+      "append"    … 既存の記述を残したまま、その下へ本文を積む
+    転記先が未作成ならどの mode でも新規作成で、違いは出ない。
+    """
     proj_url = f"{cfg.origin}/{cfg.dest_project}"
     dst = read_page(cfg, cfg.dest_project, title)
 
@@ -248,19 +262,37 @@ def publish(title, body_lines, cfg, overwrite):
             ["cosense", "previewEdit", "--new", proj_url],
             input="\n".join(body_lines), capture_output=True, text=True,
         )
-    else:
-        if not overwrite:
-            skip(f"{cfg.dest_project}/{title} は既に存在する（ミラー済み）。作り直すなら --overwrite。")
+        return submit(prev, proj_url)
+
+    old = [l["text"] for l in dst["lines"]]
+    if mode == "overwrite":
         # 作り直し: タイトル(line0)はそのまま残し、それ以外を全削除→新本文を末尾に入れる
-        old = dst["lines"]
-        ops = [{"delete": l["id"]} for l in old[1:]]
+        ops = [{"delete": l["id"]} for l in dst["lines"][1:]]
         new_after_title = "\n".join(body_lines[1:])
         if new_after_title:
             ops.append({"insertBefore": "_end", "text": new_after_title})
-        prev = subprocess.run(
-            ["cosense", "previewEdit", proj_url, dst["id"]],
-            input=json.dumps({"ops": ops}), capture_output=True, text=True,
-        )
+    elif mode == "append":
+        # 同じ日を二度足さない。転記元リンクは build_body が必ず1行置くので、
+        # それが既にあれば、このページへはもう転記済みだと判る。
+        if any(t.strip() == marker for t in old):
+            skip(f"{cfg.dest_project}/{title} は既に追記済み（{marker} がある）。"
+                 f"作り直すなら --overwrite。")
+        added = body_lines[1:]  # タイトル行は既存のものを使う
+        if old and old[-1].strip():
+            added = [""] + added  # 既存末尾が空行でなければ1行空ける
+        ops = [{"insertBefore": "_end", "text": "\n".join(added)}]
+    else:
+        skip(f"{cfg.dest_project}/{title} は既に存在する（ミラー済み）。"
+             f"作り直すなら --overwrite、既存の記述の下に足すなら --append。")
+    prev = subprocess.run(
+        ["cosense", "previewEdit", proj_url, dst["id"]],
+        input=json.dumps({"ops": ops}), capture_output=True, text=True,
+    )
+    return submit(prev, proj_url)
+
+
+def submit(prev, proj_url):
+    """previewEdit の結果を受けて submitEdit まで通す。"""
     if prev.returncode != 0:
         sys.exit(f"previewEdit failed: {prev.stderr.strip()}\n{prev.stdout}")
     m = re.search(r"previewId:\s*(\S+)", prev.stdout)
@@ -279,7 +311,10 @@ def main():
     ap = argparse.ArgumentParser(description="共同日記の自分の場所を自分のプロジェクトへ転記する")
     ap.add_argument("page", help="転記元のページ名（日記は YYYY/MM/DD / today / yesterday）")
     ap.add_argument("--publish", action="store_true", help="実際に書き込む（既定は dry-run）")
-    ap.add_argument("--overwrite", action="store_true", help="既存ページを本文ごと作り直す")
+    exist = ap.add_mutually_exclusive_group()
+    exist.add_argument("--overwrite", action="store_true", help="既存ページを本文ごと作り直す")
+    exist.add_argument("--append", action="store_true",
+                       help="既存ページの記述を残したまま、その下へ追記する")
     ap.add_argument("--no-foreign-link", dest="foreign_link", action="store_false",
                     help="他者アイコン・ページリンクを [/<source>/...] 化せず素のまま残す")
     ap.add_argument("--config", type=Path, default=Path(__file__).parent / "config.toml",
@@ -301,7 +336,8 @@ def main():
         print("\n".join(body_lines))
         print("\n--- dry-run（書き込んでいない）。確定するには --publish ---", file=sys.stderr)
         return
-    publish(dest_title(title, cfg), body_lines, cfg, args.overwrite)
+    mode = "overwrite" if args.overwrite else "append" if args.append else "skip"
+    publish(dest_title(title, cfg), body_lines, cfg, source_link(cfg, title), mode)
 
 
 if __name__ == "__main__":

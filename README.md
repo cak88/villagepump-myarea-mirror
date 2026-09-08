@@ -79,21 +79,40 @@ python3 villagepump_myarea_mirror.py 2026/06/16              # dry-run: 転記�
 python3 villagepump_myarea_mirror.py 2026/06/16 --publish    # 転記先に同名ページを新規作成
 python3 villagepump_myarea_mirror.py yesterday --publish     # 設定のタイムゾーン基準の昨日。today も可
 python3 villagepump_myarea_mirror.py 2026/06/16 --publish --overwrite   # 既存ページを本文ごと作り直す
+python3 villagepump_myarea_mirror.py 2026/06/16 --publish --append      # 既存ページの下へ追記する
 ```
 
-既定は **dry-run**。中身を確認してから `--publish` を付けて確定する二段構え。転記先が既にある
-ときは事故防止で中断する（作り直すなら `--overwrite`）。日記以外の任意ページ名も指定でき、その
-場合は上部2行・ナビ行は付かず、自分のブロックだけを転記する。
+既定は **dry-run**。中身を確認してから `--publish` を付けて確定する二段構え。日記以外の任意
+ページ名も指定でき、その場合は上部2行・ナビ行は付かず、自分のブロックだけを転記する。
 
 `--config PATH` で別の設定ファイルを指定できる。
 
-正常に「やることが無い」状態（その日は未記入＝ブロック無し／既にミラー済み／転記元ページが未作成）は
+### 転記先に同名ページが既にあったとき
+
+`--overwrite` と `--append` は排他。どちらも付けなければ既定の中断になる。
+
+| | 振る舞い |
+| --- | --- |
+| 既定 | 事故防止で中断する（既存ページには一切触らない） |
+| `--overwrite` | タイトル行だけ残して本文を作り直す。**転記先で手を入れた分は消える** |
+| `--append` | 既存の記述をそのまま残し、1行空けてその下へ本文を積む |
+
+`--append` は、その日のページを自分で先に書いてしまった日に、井戸端ぶんを後ろへ足すためのもの。
+同じ日を二度足さないよう、転記元リンク `[/<source_project>/<転記元ページ名>]` が既にあれば
+「追記済み」と見て中断する（この行は転記のたびに必ず1行入るので、追記済みの印として働く）。
+だから `--append` は何度走らせても増えない。日中に井戸端へ書き足したぶんまで取り込みたいなら、
+`--overwrite` で作り直す。
+
+転記先が未作成なら、どのフラグでも普通に新規作成する（違いは出ない）。
+
+正常に「やることが無い」状態（その日は未記入＝ブロック無し／既にミラー済み・追記済み／転記元ページが未作成）は
 **終了コード 0**（無人実行で job を失敗扱いにしないため）。設定欠如・認証失敗・Cosense API 失敗など
 真のエラーだけ非ゼロで終わる。
 
 ## 自動実行（GitHub Actions）
 
-`.github/workflows/mirror.yml` が毎日 06:00 JST に `yesterday --publish` を回す（手動実行も可）。
+`.github/workflows/mirror.yml` が毎日 06:00 JST に `yesterday --publish --append` を回す（手動実行も可）。
+`--append` なので、その日のページを自分で先に書いていても中断せず、井戸端ぶんがその下に付く。
 動かすには cosense の Personal Access Token を repo secret `COSENSE_TOKEN` に登録しておくこと
 （Settings → Secrets and variables → Actions）。設定値（source/dest/icon）は秘密でないので
 workflow 内で `config.toml` を生成する。
