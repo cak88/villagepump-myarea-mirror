@@ -25,6 +25,7 @@
     villagepump_myarea_mirror.py PAGE --publish      # 転記先に同名ページを作成する
     villagepump_myarea_mirror.py PAGE --publish --overwrite   # 既存ページを本文ごと作り直す
     villagepump_myarea_mirror.py PAGE --publish --append      # 既存ページの末尾に追記する
+    villagepump_myarea_mirror.py PAGE --publish --append --no-frame  # ガワは付けない（別のツールが持つ）
 
 PAGE は転記元のページ名。日記なら `YYYY/MM/DD` のほか `today` / `yesterday` も可。
 前提: `cosense` CLI（https://www.npmjs.com/package/@helpfeel/cosense-cli）が
@@ -151,6 +152,17 @@ def diary_nav(lines):
     return None
 
 
+def trailing_nav(lines):
+    """転記先ページの末尾（空行を除く最終行）がナビ行なら、その行 dict を返す。
+
+    ガワの持ち主が別にいるとき（diarypage が先にページを立てる運用）、ナビ行は常に
+    ページの最終行にある。本文の途中に ← → を含む行があっても拾わないよう最終行だけ見る。"""
+    for l in reversed(lines):
+        if l["text"].strip():
+            return l if NAV_RE.search(l["text"]) else None
+    return None
+
+
 def link_foreign_icons(text, cfg):
     """他者のアイコン `[名前.icon]` を `[/<source>/名前.icon]` に変換する。
     自分のアイコンは対象外（転記先で解決するため）。
@@ -224,10 +236,13 @@ def source_link(cfg, src_title):
     return f"[/{cfg.source_project}/{src_title}]"
 
 
-def build_body(title, lines, blocks, cfg, foreign_link=True):
-    """転記先ページの本文行リストを組む（1行目 = タイトル）。"""
+def build_body(title, lines, blocks, cfg, foreign_link=True, frame=True):
+    """転記先ページの本文行リストを組む（1行目 = タイトル）。
+
+    frame=False なら日記ページでもガワ（上部2行・ナビ行）を付けない。転記先のページを
+    別のツールが立てていて、そちらがガワを持つときに使う（二重に入るのを防ぐ）。"""
     body = [title]
-    is_diary = bool(DIARY_RE.match(title))
+    is_diary = frame and bool(DIARY_RE.match(title))
     if is_diary:
         body += diary_header(lines)
     # 転記元への参照。日記なら見出し2行の下、それ以外はタイトル直下に置く。
@@ -243,6 +258,27 @@ def build_body(title, lines, blocks, cfg, foreign_link=True):
     if foreign_link:
         body = [link_foreign_pages(link_foreign_icons(t, cfg), cfg) for t in body]
     return apply_date_separator(body, title, cfg)
+
+
+def append_placement(dst_lines, added):
+    """--append で「どこへ・どう」積むかを決め、(anchor, added) を返す。
+
+    転記先の最終行がナビ行なら、その下ではなく上へ積む。ナビは前日/翌日へのチェーンとして
+    ページの最後に居る行なので、下に積むと日々のチェーンが本文に埋もれる。ガワの持ち主が
+    別にいる運用（diarypage が先にページを立てる）では、これが通常の経路になる。"""
+    nav = trailing_nav(dst_lines[1:])
+    if nav is None:
+        anchor = "_end"
+        before = dst_lines[-1]["text"] if dst_lines else ""
+    else:
+        idx = next(i for i, l in enumerate(dst_lines) if l["id"] == nav["id"])
+        anchor = nav["id"]
+        before = dst_lines[idx - 1]["text"] if idx else ""
+    if before.strip():
+        added = [""] + added        # 挿入位置の直前が空行でなければ1行空ける
+    if nav is not None and added and added[-1].strip():
+        added = added + [""]        # ナビ行と離す
+    return anchor, added
 
 
 def publish(title, body_lines, cfg, marker, mode):
@@ -277,10 +313,8 @@ def publish(title, body_lines, cfg, marker, mode):
         if any(t.strip() == marker for t in old):
             skip(f"{cfg.dest_project}/{title} は既に追記済み（{marker} がある）。"
                  f"作り直すなら --overwrite。")
-        added = body_lines[1:]  # タイトル行は既存のものを使う
-        if old and old[-1].strip():
-            added = [""] + added  # 既存末尾が空行でなければ1行空ける
-        ops = [{"insertBefore": "_end", "text": "\n".join(added)}]
+        anchor, added = append_placement(dst["lines"], body_lines[1:])
+        ops = [{"insertBefore": anchor, "text": "\n".join(added)}]
     else:
         skip(f"{cfg.dest_project}/{title} は既に存在する（ミラー済み）。"
              f"作り直すなら --overwrite、既存の記述の下に足すなら --append。")
@@ -317,6 +351,9 @@ def main():
                        help="既存ページの記述を残したまま、その下へ追記する")
     ap.add_argument("--no-foreign-link", dest="foreign_link", action="store_false",
                     help="他者アイコン・ページリンクを [/<source>/...] 化せず素のまま残す")
+    ap.add_argument("--no-frame", dest="frame", action="store_false",
+                    help="日記ページでもガワ（上部2行・ナビ行）を付けない。"
+                         "転記先のページを別のツールが立てていて、そちらがガワを持つとき用")
     ap.add_argument("--config", type=Path, default=Path(__file__).parent / "config.toml",
                     help="設定ファイルのパス（既定: スクリプトと同じディレクトリの config.toml）")
     args = ap.parse_args()
@@ -330,7 +367,7 @@ def main():
     blocks = extract_blocks(lines, cfg.icon)
     if not blocks:
         skip(f"{title} に [{cfg.icon}.icon] ブロックが無い（その日は未記入）")
-    body_lines = build_body(title, lines, blocks, cfg, args.foreign_link)
+    body_lines = build_body(title, lines, blocks, cfg, args.foreign_link, args.frame)
 
     if not args.publish:
         print("\n".join(body_lines))
