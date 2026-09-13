@@ -46,6 +46,8 @@ from pathlib import Path
 ICON_RE = re.compile(r"^\[[^\]]+\.icon\]")        # col0 = その人のセクション見出し
 DIARY_RE = re.compile(r"^\d{4}/\d{2}/\d{2}$")     # 日記ページのタイトル形式
 NAV_RE = re.compile(r"←.*→")                      # 前日←当日→翌日 のナビ行
+# アイコンだけの行（`[2026-09.icon][2026-W37.icon]` 等）。転記先のガワの末尾に付くことがある
+ICON_ONLY_RE = re.compile(r"^(?:\[[^\[\]]+\.icon(?:\*\d+)?\])+$")
 ICON_TOKEN_RE = re.compile(r"\[([^\[\]]+?)\.icon(\*\d+)?\]")  # [名前.icon] / [名前.icon*N]
 # 単層ブラケット（[[太字]] の内側は対象外にする lookbehind/lookahead 付き）
 LINK_RE = re.compile(r"(?<!\[)\[([^\[\]]+)\](?!\])")
@@ -153,13 +155,17 @@ def diary_nav(lines):
 
 
 def trailing_nav(lines):
-    """転記先ページの末尾（空行を除く最終行）がナビ行なら、その行 dict を返す。
+    """転記先ページの末尾ブロックの先頭＝ナビ行を返す。無ければ None。
 
-    ガワの持ち主が別にいるとき（diarypage が先にページを立てる運用）、ナビ行は常に
-    ページの最終行にある。本文の途中に ← → を含む行があっても拾わないよう最終行だけ見る。"""
+    ガワの持ち主が別にいるとき（diarypage が先にページを立てる運用）、ページの末尾は
+    ナビ行と、その下に付くことがあるアイコン行（`[YYYY-MM.icon][YYYY-Www.icon]`）だけになる。
+    末尾から、空行とアイコンだけの行を飛ばして遡り、そこがナビ行ならそれを返す。飛ばすのは
+    この2種類だけなので、本文の途中に ← → を含む行があっても拾わない。"""
     for l in reversed(lines):
-        if l["text"].strip():
-            return l if NAV_RE.search(l["text"]) else None
+        t = l["text"].strip()
+        if not t or ICON_ONLY_RE.match(t):
+            continue
+        return l if NAV_RE.search(t) else None
     return None
 
 
