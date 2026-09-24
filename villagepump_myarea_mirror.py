@@ -17,8 +17,9 @@
   - 後ろから2行目のナビ行（`[前日.icon] ← 当日 → [翌日.icon]`）を末尾に
     → 転記先で自分の前日/翌日ページへのナビとして働き、日記が日々チェーンする
 
-他者アイコン/ページリンクは既定で `[/<source_project>/...]`（転記元へのクロスプロジェクト
-参照）に変換し、転記先でのリンク切れ・孤児リンクを防ぐ。
+他者アイコンと切り出し先リンク（`✂[ページ名]`）は既定で `[/<source_project>/...]`（転記元への
+クロスプロジェクト参照）に変換し、転記先でのリンク切れ・孤児リンクを防ぐ。
+マークの無いページリンク `[ページ名]` は素のまま残す。
 
 使い方:
     villagepump_myarea_mirror.py PAGE                # dry-run: 転記される本文を表示するだけ（書き込まない）
@@ -49,8 +50,9 @@ NAV_RE = re.compile(r"←.*→")                      # 前日←当日→翌日
 # アイコンだけの行（`[2026-09.icon][2026-W37.icon]` 等）。転記先のガワの末尾に付くことがある
 ICON_ONLY_RE = re.compile(r"^(?:\[[^\[\]]+\.icon(?:\*\d+)?\])+$")
 ICON_TOKEN_RE = re.compile(r"\[([^\[\]]+?)\.icon(\*\d+)?\]")  # [名前.icon] / [名前.icon*N]
-# 単層ブラケット（[[太字]] の内側は対象外にする lookbehind/lookahead 付き）
-LINK_RE = re.compile(r"(?<!\[)\[([^\[\]]+)\](?!\])")
+# 切り出しマーク付きのリンク `✂[ページ名]` / `✂ [ページ名]`（切り出された先のページ）。
+# `]]` で終わる `[[太字]]` は lookahead で除外する
+CUT_LINK_RE = re.compile(r"(✂\ufe0f?\s*)\[([^\[\]]+)\](?!\])")
 # 自分の日記へのリンク `[YYYY/MM/DD]` / `[YYYY/MM/DD.icon]` / `[YYYY/MM/DD.icon*N]`。
 # `[` の直後が数字なので `[/<project>/YYYY/MM/DD]` のような他プロジェクト参照には当たらない。
 DIARY_LINK_RE = re.compile(r"\[(\d{4}/\d{2}/\d{2})((?:\.icon(?:\*\d+)?)?)\]")
@@ -185,20 +187,21 @@ def link_foreign_icons(text, cfg):
 
 
 def link_foreign_pages(text, cfg):
-    """転記元内のページリンク `[ページ名]` を `[/<source>/ページ名]` に変換する。
+    """切り出しマーク付きのリンク `✂[ページ名]` を `✂[/<source>/ページ名]` に変換する。
+    切り出された先は転記元にあるページなので、転記元側を指させる。
+    マークの無い `[ページ名]` はキーワードとしてのリンクなので、転記先でも素のまま残す。
     除外（別物なので触らない）:
       - スラッシュを含む … 別プロジェクトリンク `[/proj/...]` や `[2026/06/16]` 等
       - URL を含む … 外部リンク `[ラベル https://...]`
       - `.icon` を含む … アイコン（link_foreign_icons が処理済み／自分のは残す）
-      - 装飾記法 `[* ...]` `[$ ...]` 等
-      - `[[太字]]` の内側（LINK_RE の lookaround で除外済み）"""
+      - 装飾記法 `[* ...]` `[$ ...]` 等"""
     def repl(m):
-        x = m.group(1)
+        mark, x = m.group(1), m.group(2)
         if ("/" in x or "http" in x or ".icon" in x
                 or not x.strip() or DECORATION_RE.match(x)):
             return m.group(0)
-        return f"[/{cfg.source_project}/{x}]"
-    return LINK_RE.sub(repl, text)
+        return f"{mark}[/{cfg.source_project}/{x}]"
+    return CUT_LINK_RE.sub(repl, text)
 
 
 def dest_title(title, cfg):
@@ -356,7 +359,7 @@ def main():
     exist.add_argument("--append", action="store_true",
                        help="既存ページの記述を残したまま、その下へ追記する")
     ap.add_argument("--no-foreign-link", dest="foreign_link", action="store_false",
-                    help="他者アイコン・ページリンクを [/<source>/...] 化せず素のまま残す")
+                    help="他者アイコン・切り出し先リンクを [/<source>/...] 化せず素のまま残す")
     ap.add_argument("--no-frame", dest="frame", action="store_false",
                     help="日記ページでもガワ（上部2行・ナビ行）を付けない。"
                          "転記先のページを別のツールが立てていて、そちらがガワを持つとき用")
