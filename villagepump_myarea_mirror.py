@@ -275,6 +275,12 @@ def build_body(title, lines, blocks, cfg, foreign_link=True, frame=True):
     # `/` を含むので link_foreign_pages にも apply_date_separator にも触られない。
     body.append(source_link(cfg, title))
     for block in blocks:
+        if cfg.source_label:
+            # 見出しが「ここから井戸端ぶん」を示すので、区切りの空行と自分のアイコン行は置かない。
+            # アイコンの後ろに書いた文があれば、アイコンだけ外して本文と同じ1段下げで残す。
+            rest = block[0][len(f"[{cfg.icon}.icon]"):].strip()
+            body += ([f" {rest}"] if rest else []) + block[1:]
+            continue
         body.append("")  # 見出し/前ブロックとの区切り
         body += block
     if is_diary:
