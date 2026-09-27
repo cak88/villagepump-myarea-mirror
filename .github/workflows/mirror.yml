@@ -58,6 +58,7 @@ jobs:
           origin = "https://scrapbox.io"
           timezone = "Asia/Tokyo"
           date_separator = "-"
+          source_label = "井戸端日記"
           EOF
 
       - name: mirror

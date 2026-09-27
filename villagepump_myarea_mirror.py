@@ -71,6 +71,7 @@ class Config:
     origin: str           # Cosense のオリジン
     timezone: str         # today/yesterday 解決用のタイムゾーン
     date_separator: str = "/"  # 転記先での日記タイトルの日付区切り（"/" or "-"）
+    source_label: str = ""     # 転記元への参照を見出しにするときの名前（空なら従来の参照行）
 
 
 def skip(msg):
@@ -98,6 +99,7 @@ def load_config(path):
             origin=data.get("origin", "https://scrapbox.io"),
             timezone=data.get("timezone", "Asia/Tokyo"),
             date_separator=sep,
+            source_label=data.get("source_label", ""),
         )
     except KeyError as e:
         sys.exit(f"config に必須キーが無い: {e} ({path})")
@@ -244,8 +246,20 @@ def apply_date_separator(body, src_title, cfg):
 
 def source_link(cfg, src_title):
     """転記元への参照行。どこから写したかがページ自身に残る。
-    追記モード（--append）は、この行の有無を「もう追記済み」の印として使う。"""
+    追記モード（--append）は、この行の有無を「もう追記済み」の印として使う。
+
+    source_label があれば、ニュースの `[** 朝のニュース]` と揃えた見出しにする
+    （`[** [井戸端日記 https://…/villagepump/2026%2F09%2F26]]`）。URL の `/` は %2F にする
+    ——ページ名の `/` を素のまま URL に置くと Cosense は別のページとして引き、404 になる。"""
+    if cfg.source_label:
+        return f"[** [{cfg.source_label} {page_url(cfg, cfg.source_project, src_title)}]]"
     return f"[/{cfg.source_project}/{src_title}]"
+
+
+def source_markers(cfg, src_title):
+    """追記済みの印として見る行。見出しに変える前の参照行も数える
+    （旧い形で転記済みの日を再実行しても二重に積まない）。"""
+    return {source_link(cfg, src_title), f"[/{cfg.source_project}/{src_title}]"}
 
 
 def build_body(title, lines, blocks, cfg, foreign_link=True, frame=True):
@@ -305,8 +319,8 @@ def append_placement(dst_lines, added):
     return anchor, added
 
 
-def publish(title, body_lines, cfg, marker, mode):
-    """title は転記先でのページ名（dest_title 済み）、marker は転記元への参照行。
+def publish(title, body_lines, cfg, markers, mode):
+    """title は転記先でのページ名（dest_title 済み）、markers は転記元への参照行（新旧）。
 
     mode は転記先に同名ページが既にあったときの振る舞い:
       "skip"      … 事故防止で中断する（既定）
@@ -334,8 +348,9 @@ def publish(title, body_lines, cfg, marker, mode):
     elif mode == "append":
         # 同じ日を二度足さない。転記元リンクは build_body が必ず1行置くので、
         # それが既にあれば、このページへはもう転記済みだと判る。
-        if any(t.strip() == marker for t in old):
-            skip(f"{cfg.dest_project}/{title} は既に追記済み（{marker} がある）。"
+        found = next((t.strip() for t in old if t.strip() in markers), None)
+        if found:
+            skip(f"{cfg.dest_project}/{title} は既に追記済み（{found} がある）。"
                  f"作り直すなら --overwrite。")
         anchor, added = append_placement(dst["lines"], body_lines[1:])
         ops = [{"insertBefore": anchor, "text": "\n".join(added)}]
@@ -398,7 +413,7 @@ def main():
         print("\n--- dry-run（書き込んでいない）。確定するには --publish ---", file=sys.stderr)
         return
     mode = "overwrite" if args.overwrite else "append" if args.append else "skip"
-    publish(dest_title(title, cfg), body_lines, cfg, source_link(cfg, title), mode)
+    publish(dest_title(title, cfg), body_lines, cfg, source_markers(cfg, title), mode)
 
 
 if __name__ == "__main__":
