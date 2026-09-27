@@ -56,6 +56,9 @@ CUT_LINK_RE = re.compile(r"(✂\ufe0f?\s*)\[([^\[\]]+)\](?!\])")
 # 自分の日記へのリンク `[YYYY/MM/DD]` / `[YYYY/MM/DD.icon]` / `[YYYY/MM/DD.icon*N]`。
 # `[` の直後が数字なので `[/<project>/YYYY/MM/DD]` のような他プロジェクト参照には当たらない。
 DIARY_LINK_RE = re.compile(r"\[(\d{4}/\d{2}/\d{2})((?:\.icon(?:\*\d+)?)?)\]")
+# newsdiary がその日の日記の末尾に積むニュースの見出し（正本は newsdiary の NEWS_MARKER）。
+# ページにこの行があれば、井戸端ぶんはその上へ積む
+NEWS_MARKER = "[** 朝のニュース]"
 # Cosense の装飾記法 `[* 太字]` `[/ 斜体]` `[$ 数式]` 等＝記号列＋空白で始まる
 DECORATION_RE = re.compile(r"^[*/\-_$~%=]+\s")
 
@@ -272,9 +275,21 @@ def build_body(title, lines, blocks, cfg, foreign_link=True, frame=True):
 def append_placement(dst_lines, added):
     """--append で「どこへ・どう」積むかを決め、(anchor, added) を返す。
 
+    ニュース（newsdiary が積む `[** 朝のニュース]` の塊）があれば、その上へ積む。日記は上から書く
+    ので、自分の書いたこと → 井戸端 → ニュース の順に、書き手の近いものほど上に並べる。
+    ニュースは前日の朝に入っていて、このツールは翌朝に走るので、無い日は通常の位置に積む。
+
     転記先の最終行がナビ行なら、その下ではなく上へ積む。ナビは前日/翌日へのチェーンとして
     ページの最後に居る行なので、下に積むと日々のチェーンが本文に埋もれる。ガワの持ち主が
     別にいる運用（diarypage が先にページを立てる）では、これが通常の経路になる。"""
+    news = next((l for l in dst_lines[1:] if l["text"].strip() == NEWS_MARKER), None)
+    if news is not None:
+        idx = next(i for i, l in enumerate(dst_lines) if l["id"] == news["id"])
+        if dst_lines[idx - 1]["text"].strip():
+            added = [""] + added
+        if added and added[-1].strip():
+            added = added + [""]    # ニュースの見出しと離す
+        return news["id"], added
     nav = trailing_nav(dst_lines[1:])
     if nav is None:
         anchor = "_end"
