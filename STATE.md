@@ -18,6 +18,11 @@
   2026-09-28 06:00(9/27 分)。** その朝、見出しの位置(ニュースの上)と形を見る。
 - 9/27 朝までに転記済みの日は旧い形(`[/villagepump/<日付>]` ＋空行＋アイコン行)のまま残る(追記のみ)。
 
+**ポリリポの配線を入れた(2026-09-27、repo-scaffold)。** `AGENTS.md`(規約の正本)・`CLAUDE.md`
+(symlink)・`.claude/skills` → `.agents/skills`、`~/.codex/config.toml` に trust。Claude Code・Codex の
+両方から起動し、共通スキルと AGENTS.md の規約が読まれることを確認した。MCP は使わないので
+`.mcp.json` / `.codex/config.toml` は置いていない。
+
 ## いま効いている制約
 
 - **転記先への書き込みは追記のみ。** 行の削除・書き換えをしない(`--overwrite` は手動で明示したときだけ)。
