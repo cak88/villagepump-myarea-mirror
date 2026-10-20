@@ -2,7 +2,11 @@
 
 ## いまどこ
 
-**稼働中。** GitHub Actions が毎朝 06:00 JST(実際は2時間前後遅れる)に、井戸端(villagepump)の前日の
+**停止中(2026-10-20 cak の指示)。** workflow `mirror diary` を `gh workflow disable` で止めた
+(状態 `disabled_manually`)。コードと secret は残してあり、`gh workflow enable "mirror diary"` で戻る。
+停止の理由は聞いていない。以下は停止前の記録。
+
+停止前は、GitHub Actions が毎朝 06:00 JST(実際は2時間前後遅れる)に、井戸端(villagepump)の前日の
 ページから自分の場所を切り出し、`cak-diary` の同じ日の日記へ `--append --no-frame` で積む。
 直近の定時実行(9/25〜9/27)は success。
 
@@ -39,7 +43,8 @@
 
 ## 次の一手
 
-1. 2026-09-28 の朝、9/27 の日記で井戸端ぶんがニュースの上に見出し付きで入ったかを見る。
+1. なし(停止中)。再開するなら workflow を enable する。日記の行き先が変わっていれば
+   config の転記先も合わせる。
 
 ## 詰まり・待ち
 
